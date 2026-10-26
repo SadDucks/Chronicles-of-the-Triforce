@@ -54,6 +54,7 @@ class multiplayerSetup(QtWidgets.QWidget):
         self.pages.addWidget(self._createModePage());
         self.pages.addWidget(self._createJoinPage());
         self.pages.addWidget(self._createHostPage());
+        self.pages.addWidget(self._createClientLobbyPage());
 
         layout = QtWidgets.QVBoxLayout(self);
         layout.addWidget(self.pages);
@@ -171,6 +172,32 @@ class multiplayerSetup(QtWidgets.QWidget):
         backButton = QtWidgets.QPushButton("Stop Hosting");
         backButton.clicked.connect(self._showModePage);
         layout.addWidget(backButton, 0, QtCore.Qt.AlignmentFlag.AlignHCenter);
+        return page;
+
+    def _createClientLobbyPage(self):
+        page = QtWidgets.QWidget();
+        layout = QtWidgets.QVBoxLayout(page);
+
+        # Clients wait here until the host sends the game_start message.
+        title = QtWidgets.QLabel("Game Lobby");
+        title.setStyleSheet("font-size: 24px; font-weight: bold;");
+        title.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter);
+        layout.addWidget(title);
+
+        # The server-assigned seat is shown while the game is still waiting.
+        self.clientLobbyStatus = QtWidgets.QLabel(
+            "Connected. Waiting for the host to start..."
+        );
+        self.clientLobbyStatus.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter);
+        layout.addWidget(self.clientLobbyStatus);
+
+        # The host refreshes this roster whenever someone joins or leaves.
+        self.clientLobbyPlayerList = QtWidgets.QListWidget();
+        layout.addWidget(self.clientLobbyPlayerList, 1);
+
+        leaveButton = QtWidgets.QPushButton("Leave Lobby");
+        leaveButton.clicked.connect(self._showModePage);
+        layout.addWidget(leaveButton, 0, QtCore.Qt.AlignmentFlag.AlignHCenter);
         return page;
 
     def _prepareDiscoverySocket(self, port):
@@ -600,9 +627,12 @@ class multiplayerSetup(QtWidgets.QWidget):
         client = self.client;
         self.client = None;
         client.deleteLater();
-        self.refreshTimer.start();
+
         if self.pages.currentIndex() == 1:
+            self.refreshTimer.start();
             self.joinStatus.setText("Disconnected from the host.");
+        elif self.pages.currentIndex() == 3:
+            self.clientLobbyStatus.setText("Disconnected from the host.");
 
     def _playerConnected(self, address):
         print(f"[LAN lobby] Player connected from {address[0]}:{address[1]}")
@@ -616,43 +646,75 @@ class multiplayerSetup(QtWidgets.QWidget):
         for seat, playerAddress in enumerate(list(self.playerSeats), start=1):
             self.playerSeats[playerAddress] = seat;
         self._updatePlayerList();
+        self._broadcastLobbyState();
+
+    def _lobbyPlayerNames(self):
+        # Keep the host first so the roster order matches player seat order.
+        return [
+            QtNetwork.QHostInfo.localHostName(),
+            *self.connectedPlayers.values(),
+        ]
+
+    def _broadcastLobbyState(self):
+        if self.hostServer is None or self.isStarted:
+            return;
+
+        # Send a complete snapshot so clients can replace stale roster state.
+        self.hostServer.send({
+            "type": "lobby_state",
+            "session_id": self.sessionId,
+            "players": self._lobbyPlayerNames(),
+        });
 
     def _handleHostMessage(self, address, message):
         if not isinstance(message, dict):
             return;
+
         if self.isStarted:
             if message.get("type") == "action":
                 self._handleNetworkAction(address, message);
             return;
+
         if message.get("type") != "join":
             return;
+
         playerName = message.get("player_name");
         if not isinstance(playerName, str) or not playerName.strip():
             return;
+
         if address not in self.playerSeats:
             if len(self.playerSeats) >= 3:
                 self.hostServer.send({"type": "error", "message": "This game is full."}, address);
                 return;
             self.playerSeats[address] = len(self.playerSeats) + 1;
+
         playerName = playerName.strip()[:40];
         print(
             f"[LAN lobby] Join request received from "
             f"{playerName} at {address[0]}:{address[1]}"
         );
+
         self.connectedPlayers[address] = playerName;
+
+        # Include the current roster in admission so the new client renders it immediately.
         self.hostServer.send({
             "type": "joined",
             "session_id": self.sessionId,
             "seat": self.playerSeats[address],
             "player_name": playerName,
+            "players": self._lobbyPlayerNames(),
         }, address);
         self._updatePlayerList();
+        self._broadcastLobbyState();
 
     def _handleClientMessage(self, message):
         if not isinstance(message, dict):
             return;
+
+        # The host's admission response assigns this client a seat and opens the lobby.
         if message.get("type") == "joined":
             receivedSessionId = message.get("session_id");
+
             if (
                 not isinstance(receivedSessionId, str)
                 or (self.sessionId is not None and receivedSessionId != self.sessionId)
@@ -662,20 +724,45 @@ class multiplayerSetup(QtWidgets.QWidget):
             seat = message.get("seat");
             if not isinstance(seat, int) or not 1 <= seat <= 3:
                 return;
+
             self.localPlayerIndex = seat;
-            self.joinStatus.setText(
+            self.clientLobbyStatus.setText(
                 f"Joined as Player {seat + 1}. Waiting for the host to start..."
             );
+            self._updateClientLobby(message.get("players"));
+            self.pages.setCurrentIndex(3);
+
+        elif message.get("type") == "lobby_state":
+            if message.get("session_id") != self.sessionId:
+                return;
+
+            self._updateClientLobby(message.get("players"));
+
         elif message.get("type") == "error":
             self.joinStatus.setText(str(message.get("message", "Unable to join game.")));
+
         elif message.get("type") == "game_start":
             self._openSharedGame(message);
+
         elif message.get("type") == "game_update":
             self._openSharedGame(message, isUpdate=True);
+
+    def _updateClientLobby(self, players):
+        if not isinstance(players, list) or not all(
+            isinstance(name, str) for name in players
+        ):
+            return;
+
+        # Replace the whole roster because lobby_state messages are full snapshots.
+        self.clientLobbyPlayerList.clear();
+        for playerName in players:
+            self.clientLobbyPlayerList.addItem(playerName);
 
     def _startHostedGame(self):
         if self.isStarted or not self.playerSeats:
             return;
+
+        # Only build the shared game after at least one client has joined.
         humanCount = len(self.playerSeats) + 1;
         self.sharedGame = game(humanCount, 4 - humanCount);
         playerNames = [QtNetwork.QHostInfo.localHostName()] * 4;
