@@ -69,17 +69,6 @@ class player:
             print("Card damage boost:", activeCard.damageBoost);
             print("Card shield:", activeCard.shield);
 
-
-    def getAttackDamage(self, attackCard):
-        damage = attackCard.attack + self.damageBoost;
-        self.damageBoost = 0;
-        return damage;
-
-    def reduceIncomingDamage(self, damage):
-        blocked = min(self.shield, damage);
-        self.shield -= blocked;
-        return damage - blocked;
-
     # Selects Cards
 
     def selectCard(self, card):
