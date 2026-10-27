@@ -11,8 +11,6 @@ class player:
         self.bench = [];
         self.prizeCards = [];
         self.energy = 10;
-        self.damageBoost = 0;
-        self.shield = 0;
         self.attacked = False;
         self.selectedCards = None;
         self.round = 1;
@@ -36,6 +34,10 @@ class player:
         return self.energy;
 
     def applySupportCard(self, support):
+        activeCard = self.activeCard;
+
+        print("Support card:", support.name); # Test line
+
         for effect in support.effects:
             effectType = effect["effectType"];
             amount = effect["amount"];
@@ -45,17 +47,38 @@ class player:
                 self.energy += amount;
 
             elif effectType == "healing" and duration == "instant":
-                if self.activeCard:
-                    self.activeCard.currentHealth = min(self.activeCard.currentHealth + amount, self.activeCard.health);
+                if activeCard is not None:
+                    activeCard.currentHealth = min(
+                        activeCard.currentHealth + amount,
+                        activeCard.health
+                    )
 
             elif effectType == "damage_boost" and duration == "next_attack":
-                self.damageBoost += amount;
+                if activeCard is not None:
+                    activeCard.damageBoost += amount;
 
             elif effectType == "shield" and duration == "next_incoming_attack":
-                self.shield += amount;
+                if activeCard is not None:
+                    activeCard.shield += amount;
 
-    
+            else:
+                raise ValueError(f"Unknown support effect: {effect}");
 
+        # Test lines
+        if activeCard is not None:
+            print("Card damage boost:", activeCard.damageBoost);
+            print("Card shield:", activeCard.shield);
+
+
+    def getAttackDamage(self, attackCard):
+        damage = attackCard.attack + self.damageBoost;
+        self.damageBoost = 0;
+        return damage;
+
+    def reduceIncomingDamage(self, damage):
+        blocked = min(self.shield, damage);
+        self.shield -= blocked;
+        return damage - blocked;
 
     # Selects Cards
 

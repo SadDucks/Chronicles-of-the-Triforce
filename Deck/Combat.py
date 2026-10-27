@@ -2,6 +2,10 @@ def attack(attacker, defender):
     damage = attacker.attack + getattr(attacker, "damageBoost", 0);
 
     shield = getattr(defender, "shield", 0);
+
+    print("Defender:", defender.name) # Test line
+    print("Shield before attack:", shield) # Test line
+
     absorbed = min(damage, shield);
     damage -= absorbed;
     defender.shield = shield - absorbed;
@@ -23,25 +27,34 @@ def reportAttack(player, attacker, defender, damage):
 def heal(card, amount):
     card.currentHealth = min(card.currentHealth + amount, card.health);
 
+
 def applySupport(supportCard, player):
-    effect = supportCard.effectType;
-    amount = supportCard.amount;
+
+    print("DEBUG: applySupport was called\n\n\n") # Test line
+
     activeCard = player.activeCard;
 
-    if effect == "healing":
-        if activeCard is not None:
-            heal(activeCard, amount);
+    for effect in supportCard.effects:
+        effectType = effect["effectType"];
+        amount = effect["amount"];
+        duration = effect["duration"];
 
-    elif effect == "energy":
-        player.energy += amount;
+        if effectType == "healing" and duration == "instant":
+            if activeCard is not None:
+                heal(activeCard, amount);
 
-    elif effect == "damage_boost":
-        if activeCard is not None:
-            activeCard.damageBoost = (getattr(activeCard, "damageBoost", 0) + amount);
+        elif effectType == "energy" and duration == "instant":
+            player.energy += amount;
 
-    elif effect == "shield":
-        if activeCard is not None:
-            activeCard.shield = (getattr(activeCard, "shield", 0) + amount);
+        elif effectType == "damage_boost" and duration == "next_attack":
+            if activeCard is not None:
+                activeCard.damageBoost += amount;
 
-    else:
-        raise ValueError(f"Unknown support effect: {effect}");
+        elif effectType == "shield" and duration == "next_incoming_attack":
+            if activeCard is not None:
+                activeCard.shield += amount;
+
+        else:
+            raise ValueError(f"Unknown support effect: {effect}");
+
+    print("Shield after support:", activeCard.shield if activeCard is not None else "No active card") # Test line
