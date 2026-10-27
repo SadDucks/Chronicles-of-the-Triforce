@@ -23,6 +23,55 @@ class bot:
     def getEnergy(self):
         return self.player.energy;
 
+    def getAttackOptions(self):
+        options = [];
+
+        candidates = [];
+
+        if self.player.activeCard is not None:
+            candidates.append(("active", self.player.activeCard));
+
+        for card in self.player.bench:
+            candidates.append(("bench", card));
+
+        for card in self.getHand():
+            if hasattr(card, "attack") and hasattr(card, "energy"):
+                candidates.append(("hand", card));
+
+        for location, attacker in candidates:
+            target = self.chooseTarget(attacker);
+
+            if target is None:
+                continue;
+
+            if attacker.energy > self.getEnergy():
+                continue;
+
+            damage = attacker.attack + getattr(attacker, "damageBoost", 0);
+            damage = max(0, damage - getattr(target, "shield", 0));
+            damage = min(damage, target.currentHealth);
+
+            score = damage;
+
+            if damage >= target.currentHealth and target.currentHealth > 0:
+                score += 100;
+
+            if attacker.currentHealth <= 5:
+                score -=5;
+
+            options.append({
+                "card": attacker,
+                "location": location,
+                "target": target,
+                "damage": damage,
+                "energyCost": attacker.energy,
+                "score": score
+            });
+
+        options.sort(key = lambda option: option["score"], reverse = True);
+
+        return options;
+
     def getOpponents(self):
         opponents = [];
 
