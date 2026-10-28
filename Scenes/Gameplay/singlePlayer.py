@@ -1102,6 +1102,8 @@ class playerActions(QtCore.QObject):
         scene.showActiveCard(card);
         if scene.passiveCardPreview is not None:
             scene.passiveCardPreview.hide();
+        if scene.game.round == 1:
+            scene.endTurn();
 
     #Attack related functions
     def attack(self):
@@ -1113,7 +1115,11 @@ class playerActions(QtCore.QObject):
             return;
 
         attacker = self.game.currentPlayer.activeCard;
-        if not isinstance(attacker, attackCard) or self.game.currentPlayer.attacked:
+        if (
+            self.game.round == 1
+            or not isinstance(attacker, attackCard)
+            or self.game.currentPlayer.attacked
+        ):
             return;
         if self.game.currentPlayer.energy < attacker.energy:
             self.scene.playAreas.flashInsufficientStamina();
@@ -1155,6 +1161,7 @@ class playerActions(QtCore.QObject):
         if (
             attackerPlayer is not self.game.players[0]
             or not isinstance(attacker, attackCard)
+            or self.game.round == 1
             or attackerPlayer.attacked
             or targetPlayer is None
             or targetCard.currentHealth <= 0

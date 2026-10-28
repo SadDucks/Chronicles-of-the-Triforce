@@ -119,6 +119,9 @@ class bot:
             print("No active card available, moving on.");
             return;
 
+        if self.game.round == 1:
+            return;
+
         self.playSupportCards();
         attacker = self.player.activeCard;
 
