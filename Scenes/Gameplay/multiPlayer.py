@@ -2253,15 +2253,26 @@ class showPassiveCard(QtWidgets.QFrame):
         if parent is None:
             return;
 
-        panelWidth = min(280, max(1, parent.width() - 40));
-        panelHeight = min(400, max(1, parent.height() - 40));
+        scale = min(parent.width() / 960, parent.height() / 540);
+        margin = max(1, round(20 * scale));
+        panelWidth = min(
+            max(1, round(280 * scale)),
+            max(1, parent.width() - 2 * margin)
+        );
+        panelHeight = min(
+            max(1, round(400 * scale)),
+            max(1, parent.height() - 2 * margin)
+        );
         self.setGeometry(
-            parent.width() - panelWidth - 20,
+            parent.width() - panelWidth - margin,
             (parent.height() - panelHeight) // 2,
             panelWidth,
             panelHeight
         );
-        imageSize = QtCore.QSize(max(1, panelWidth - 32), max(1, panelHeight - 120));
+        imageSize = QtCore.QSize(
+            max(1, panelWidth - round(32 * scale)),
+            max(1, panelHeight - round(120 * scale))
+        );
         pixmap = self.cardPreviewSource.scaled(
             imageSize,
             QtCore.Qt.AspectRatioMode.KeepAspectRatio,
