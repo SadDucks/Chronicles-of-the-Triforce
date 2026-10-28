@@ -1,0 +1,55 @@
+name: Build packages
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+
+    runs-on: ${{ matrix.os }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install PyInstaller PySide6 setproctitle
+
+      - name: Build
+        shell: bash
+        run: |
+          if [[ "$RUNNER_OS" == "Windows" ]]; then
+            sep=';'
+            icon_args=(--icon "Assets/windowIcon/icon.ico")
+          else
+            sep=':'
+            icon_args=()
+          fi
+
+          python -m PyInstaller \
+            --noconfirm --clean --windowed --onedir \
+            --contents-directory . \
+            --name ChroniclesOfTheTriforce \
+            "${icon_args[@]}" \
+            --add-data "Assets${sep}Assets" \
+            --add-data "Items${sep}Items" \
+            --add-data "CSS${sep}CSS" \
+            --add-data "config.json${sep}." \
+            launcher.py
+
+      - name: Upload build
+        uses: actions/upload-artifact@v4
+        with:
+          name: ChroniclesOfTheTriforce-${{ runner.os }}
+          path: dist/ChroniclesOfTheTriforce/
