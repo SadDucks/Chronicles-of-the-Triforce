@@ -1,4 +1,4 @@
-# COSC-1301-Project
+# Chronicles of the Triforce
 
 ## Multiplayer
 
