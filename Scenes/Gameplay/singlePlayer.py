@@ -136,6 +136,14 @@ class gameplayScene(QtWidgets.QWidget):
         self.playAreas.handWidgets[1].cardSelected.connect(self.showPassiveCard);
         self.playAreas.showActiveCards(self.game.players, self);
         self.passiveCardPreview = None;
+        self._turnGlowPlayer = None;
+        self._turnGlowClock = QtCore.QElapsedTimer();
+        self._turnTimeoutHandled = False;
+        self._turnGlowTimer = QtCore.QTimer(self);
+        self._turnGlowTimer.setInterval(250);
+        self._turnGlowTimer.timeout.connect(self._updateTurnGlow);
+        self._turnGlowTimer.start();
+        self._updateTurnGlow();
 
 
     #Settings
@@ -253,6 +261,37 @@ class gameplayScene(QtWidgets.QWidget):
             and not self.botTurnHandler.botTurnInProgress
             and self.game.winner is None
         );
+
+    def _updateTurnGlow(self):
+        if self.game.winner is not None:
+            self._turnGlowTimer.stop();
+            self.playAreas.setTurnGlow();
+            return;
+
+        currentPlayer = self.game.currentPlayer;
+        if currentPlayer is not self._turnGlowPlayer:
+            self._turnGlowPlayer = currentPlayer;
+            self._turnGlowClock.start();
+            self._turnTimeoutHandled = False;
+
+        elapsed = self._turnGlowClock.elapsed();
+        progress = min(1.0, elapsed / 60000);
+        currentPlayerIndex = self.game.players.index(currentPlayer);
+        self.playAreas.setTurnGlow(currentPlayerIndex, progress);
+
+        if elapsed >= 60000 and not self._turnTimeoutHandled:
+            self._turnTimeoutHandled = True;
+            QtCore.QTimer.singleShot(
+                0, lambda timedPlayer=currentPlayer: self._endTimedTurn(timedPlayer)
+            );
+
+    def _endTimedTurn(self, timedPlayer):
+        if (
+            self.game.currentPlayer is timedPlayer
+            and self.game.winner is None
+            and not timedPlayer.isBot
+        ):
+            self.endTurn();
 
     def showActiveCard(self, card):
         self.activeCard = card;
@@ -433,6 +472,7 @@ class playArea:
     def __init__(self):
         self.playerFrames = [];
         self.playerAreaFrames = {};
+        self.turnGlowEffects = {};
         self.playerHandLayouts = {};
         self.handWidgets = {};
         self.activeCardLabels = {};
@@ -451,6 +491,11 @@ class playArea:
     def createFrame(self, width, height, playerNumber):
         rect = QtWidgets.QFrame();
         rect.setStyleSheet("background-color: #026012; border: 3px solid black;");
+        glowEffect = QtWidgets.QGraphicsDropShadowEffect(rect);
+        glowEffect.setOffset(0, 0);
+        glowEffect.setBlurRadius(0);
+        glowEffect.setColor(QtGui.QColor(255, 215, 0, 0));
+        rect.setGraphicsEffect(glowEffect);
         frameLayout = QtWidgets.QHBoxLayout(rect);
         frameLayout.setContentsMargins(0, 0, 0, 0);
         frameLayout.setSpacing(2);
@@ -479,6 +524,7 @@ class playArea:
         self.activeCardHealthLabels[playerNumber] = healthLabel;
 
         self.playerAreaFrames[playerNumber] = rect;
+        self.turnGlowEffects[playerNumber] = glowEffect;
         self.playerHandLayouts[playerNumber] = frameLayout;
         self.playerFrames.append((rect, width, height));
         return rect;
@@ -525,6 +571,29 @@ class playArea:
                 max(1, round(baseWidth * self.scale)),
                 max(1, round(baseHeight * self.scale))
             ));
+
+    def setTurnGlow(self, playerIndex=None, progress=0.0):
+        if playerIndex is None:
+            for glowEffect in self.turnGlowEffects.values():
+                glowEffect.setBlurRadius(0);
+                glowEffect.setColor(QtGui.QColor(255, 215, 0, 0));
+            return;
+
+        currentPlayerNumber = playerIndex + 1;
+        for playerNumber, glowEffect in self.turnGlowEffects.items():
+            if playerNumber != currentPlayerNumber:
+                glowEffect.setBlurRadius(0);
+                glowEffect.setColor(QtGui.QColor(255, 215, 0, 0));
+                continue;
+
+            progress = max(0.0, min(1.0, progress));
+            glowEffect.setColor(QtGui.QColor(
+                255,
+                round(215 * (1 - progress) + 20 * progress),
+                round(20 * progress),
+                255
+            ));
+            glowEffect.setBlurRadius(42);
 
     def showActiveCards(self, players, parent):
         for playerNumber, player in enumerate(players, start=1):
