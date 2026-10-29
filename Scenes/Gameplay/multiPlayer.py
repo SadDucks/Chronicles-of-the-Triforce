@@ -943,6 +943,7 @@ class gameplayScene(QtWidgets.QWidget):
         self.lastReceivedSequence = gameSequence;
         self.isClosing = False;
         self.settingsStatus = False;
+        self.pauseStatus = False;
         self.scoreOverlay = None;
 
         self.activeStatus = False
@@ -1324,6 +1325,31 @@ class gameplayScene(QtWidgets.QWidget):
         self.settingsOverlay.raise_();
         self.settingsOverlay.show();
 
+    def openPauseMenu(self):
+        from Scenes.menu import pauseMenu;
+
+        self.pauseOverlay = pauseMenu(self);
+        self.pauseOverlay.resumeRequested.connect(self.resumeGame);
+        self.pauseOverlay.settingsRequested.connect(self.openSettings);
+        self.pauseOverlay.quitRequested.connect(self.quitToMainMenu);
+        self.pauseStatus = True;
+        self.pauseOverlay.setGeometry(self.rect());
+        self.pauseOverlay.raise_();
+        self.pauseOverlay.show();
+
+    def resumeGame(self):
+        self.pauseStatus = False;
+        self.pauseOverlay.close();
+        self.setFocus();
+
+    def quitToMainMenu(self):
+        if self.windowRef is None:
+            return;
+
+        self._closeNetworkConnections();
+        from Scenes.menu import mainMenu;
+        self.windowRef.changeScene(mainMenu);
+
     def showEvent(self, event):
         super().showEvent(event);
         self.setFocus();
@@ -1338,8 +1364,10 @@ class gameplayScene(QtWidgets.QWidget):
                 self.scoreOverlay.close();
             elif self.settingsStatus:
                 self.settingsOverlay.close();
+            elif self.pauseStatus:
+                self.resumeGame();
             else:
-                self.openSettings();
+                self.openPauseMenu();
         else:
             super().keyPressEvent(event);
 
@@ -1354,6 +1382,8 @@ class gameplayScene(QtWidgets.QWidget):
 
         if hasattr(self, "settingsOverlay"):
             self.settingsOverlay.setGeometry(self.rect());
+        if hasattr(self, "pauseOverlay"):
+            self.pauseOverlay.setGeometry(self.rect());
         if self.scoreOverlay is not None:
             self.scoreOverlay.setGeometry(self.rect());
         if self.passiveCardPreview is not None:
@@ -1531,12 +1561,17 @@ class gameplayScene(QtWidgets.QWidget):
         ));
 
     def closeEvent(self, event):
+        self._closeNetworkConnections();
+        super().closeEvent(event);
+
+    def _closeNetworkConnections(self):
         self.isClosing = True;
         if self.hostServer is not None:
             self.hostServer.close();
+            self.hostServer = None;
         if self.client is not None:
             self.client.close();
-        super().closeEvent(event);
+            self.client = None;
 
 class scoreOverlayMenu(QtWidgets.QWidget):
     def __init__(self, parent, players):

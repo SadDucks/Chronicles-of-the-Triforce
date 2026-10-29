@@ -415,6 +415,42 @@ class settingsOverlayMenu(QtWidgets.QWidget):
 
 
 class pauseMenu(QtWidgets.QWidget):
+    resumeRequested = QtCore.Signal();
+    settingsRequested = QtCore.Signal();
+    quitRequested = QtCore.Signal();
+
     def __init__(self, parent=None):
         super().__init__(parent);
-        #placeholder for pause menu implementation
+        self.setAttribute(QtCore.Qt.WidgetAttribute.WA_StyledBackground, True);
+        self.setStyleSheet("background-color: rgba(0, 0, 0, 120);");
+
+        pauseBackgroundPanel = QtWidgets.QWidget();
+        pauseBackgroundPanel.setFixedSize(300, 300);
+        pauseBackgroundPanel.setStyleSheet("background-color: rgb(30, 30, 30); color: white;");
+
+        title = QtWidgets.QLabel("Paused");
+        title.setStyleSheet("font-size: 24px; font-weight: bold;");
+        title.setAlignment(QtCore.Qt.AlignmentFlag.AlignTop | QtCore.Qt.AlignmentFlag.AlignHCenter);
+
+        resume = AnimatedButton("Resume");
+        resume.clicked.connect(self.resumeRequested.emit);
+        resume.setButtonStyle("10px 15px", "12px", "4px");
+
+        settings = AnimatedButton("Settings");
+        settings.clicked.connect(self.settingsRequested.emit);
+        settings.setButtonStyle("10px 15px", "12px", "4px");
+
+        quitToMenu = AnimatedButton("Quit to Main Menu");
+        quitToMenu.clicked.connect(self.quitRequested.emit);
+        quitToMenu.setButtonStyle("10px 15px", "12px", "4px");
+
+        pausePanelLayout = QtWidgets.QVBoxLayout(pauseBackgroundPanel);
+        pausePanelLayout.addWidget(title);
+        pausePanelLayout.addWidget(resume);
+        pausePanelLayout.addWidget(settings);
+        pausePanelLayout.addWidget(quitToMenu);
+
+        overlayLayout = QtWidgets.QVBoxLayout(self);
+        overlayLayout.setSpacing(10);
+        overlayLayout.addWidget(pauseBackgroundPanel, 0, QtCore.Qt.AlignmentFlag.AlignCenter);
+        self.setLayout(overlayLayout);

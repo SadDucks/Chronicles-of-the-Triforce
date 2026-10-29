@@ -19,6 +19,7 @@ class gameplayScene(QtWidgets.QWidget):
         self.config = config;
         self.windowRef = windowRef;
         self.settingsStatus = False;
+        self.pauseStatus = False;
         self.scoreOverlay = None;
 
         self.activeStatus = False
@@ -157,6 +158,30 @@ class gameplayScene(QtWidgets.QWidget):
         self.settingsOverlay.raise_();
         self.settingsOverlay.show();
 
+    def openPauseMenu(self):
+        from Scenes.menu import pauseMenu;
+
+        self.pauseOverlay = pauseMenu(self);
+        self.pauseOverlay.resumeRequested.connect(self.resumeGame);
+        self.pauseOverlay.settingsRequested.connect(self.openSettings);
+        self.pauseOverlay.quitRequested.connect(self.quitToMainMenu);
+        self.pauseStatus = True;
+        self.pauseOverlay.setGeometry(self.rect());
+        self.pauseOverlay.raise_();
+        self.pauseOverlay.show();
+
+    def resumeGame(self):
+        self.pauseStatus = False;
+        self.pauseOverlay.close();
+        self.setFocus();
+
+    def quitToMainMenu(self):
+        if self.windowRef is None:
+            return;
+
+        from Scenes.menu import mainMenu;
+        self.windowRef.changeScene(mainMenu);
+
     def showEvent(self, event):
         super().showEvent(event);
         self.setFocus();
@@ -169,8 +194,10 @@ class gameplayScene(QtWidgets.QWidget):
                 self.scoreOverlay.close();
             elif self.settingsStatus:
                 self.settingsOverlay.close();
+            elif self.pauseStatus:
+                self.resumeGame();
             else:
-                self.openSettings();
+                self.openPauseMenu();
         else:
             super().keyPressEvent(event);
 
@@ -183,6 +210,8 @@ class gameplayScene(QtWidgets.QWidget):
 
         if hasattr(self, "settingsOverlay"):
             self.settingsOverlay.setGeometry(self.rect());
+        if hasattr(self, "pauseOverlay"):
+            self.pauseOverlay.setGeometry(self.rect());
         if self.scoreOverlay is not None:
             self.scoreOverlay.setGeometry(self.rect());
         if self.passiveCardPreview is not None:
