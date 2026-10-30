@@ -1262,6 +1262,11 @@ class gameplayScene(QtWidgets.QWidget):
             currentPlayer.hand.removeCard(selectedCard);
             currentPlayer.setActiveCard(selectedCard);
             selectedCard.isActive = True;
+            self.game.logEvent(
+                "active_card_selected",
+                player=currentPlayer.name,
+                card=selectedCard.name,
+            );
             endOpeningTurn = self.game.round == 1;
         elif actionType == "use_support":
             cardId = action.get("card_id");
@@ -1276,6 +1281,11 @@ class gameplayScene(QtWidgets.QWidget):
                 return;
             currentPlayer.hand.removeCard(selectedCard);
             currentPlayer.applySupportCard(selectedCard);
+            self.game.logEvent(
+                "support_card_played",
+                player=currentPlayer.name,
+                card=selectedCard.name,
+            );
         elif actionType == "attack":
             targetIndex = action.get("target");
             if (
@@ -1300,6 +1310,14 @@ class gameplayScene(QtWidgets.QWidget):
             damage = Combat.attack(attacker, target);
             currentPlayer.attacked = True;
             target.currentHealth = max(0, target.currentHealth);
+            self.game.logEvent(
+                "attack_performed",
+                player=currentPlayer.name,
+                attacker=attacker.name,
+                target=target.name,
+                damage=damage,
+                remaining_health=target.currentHealth,
+            );
             Combat.reportAttack(currentPlayer, attacker, target, damage);
             if target.currentHealth == 0:
                 self.game.resolveActiveCardDefeat(currentPlayer, targetPlayer);
@@ -1432,12 +1450,8 @@ class gameplayScene(QtWidgets.QWidget):
         self.cardDrawSound.stop();
         self.cardDrawSound.setPosition(0);
         self.cardDrawSound.play();
-        self.playAreas.showHand(
-            self.game.players, self.cardBack, self.localPlayerIndex
-        );
-        self.playAreas.handWidgets[self.localPlayerIndex + 1].cardSelected.connect(
-            self.showPassiveCard
-        );
+        self.playAreas.showHand(self.game.players, self.cardBack, self.localPlayerIndex);
+        self.playAreas.handWidgets[self.localPlayerIndex + 1].cardSelected.connect(self.showPassiveCard);
 
     def showWinnerIfAny(self):
         winner = self.game.checkWinCondition();
@@ -2363,6 +2377,11 @@ class playerActions(QtCore.QObject):
             raise RuntimeError(f"Could not remove {card.name} from the displayed hand");
         player.setActiveCard(card);
         card.isActive = True;
+        self.game.logEvent(
+            "active_card_selected",
+            player=player.name,
+            card=card.name,
+        );
         scene.showActiveCard(card);
         if scene.passiveCardPreview is not None:
             scene.passiveCardPreview.hide();
@@ -2453,6 +2472,14 @@ class playerActions(QtCore.QObject):
         attackerPlayer.attacked = True;
         if targetCard.currentHealth <= 0:
             targetCard.currentHealth = 0;
+        self.game.logEvent(
+            "attack_performed",
+            player=attackerPlayer.name,
+            attacker=attacker.name,
+            target=targetCard.name,
+            damage=damage,
+            remaining_health=targetCard.currentHealth,
+        );
         Combat.reportAttack(attackerPlayer, attacker, targetCard, damage);
         if targetCard.currentHealth == 0:
             self.game.resolveActiveCardDefeat(attackerPlayer, targetPlayer);
@@ -2496,6 +2523,11 @@ class playerActions(QtCore.QObject):
             );
 
         currentPlayer.applySupportCard(selectedCard);
+        self.game.logEvent(
+            "support_card_played",
+            player=currentPlayer.name,
+            card=selectedCard.name,
+        );
         self.scene.playAreas.energyLabel.setText(str(currentPlayer.getEnergy()));
         self.scene.playAreas.showActiveCards(
             self.game.players, self.scene, self.scene.localPlayerIndex

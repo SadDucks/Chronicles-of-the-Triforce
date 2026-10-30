@@ -39,6 +39,11 @@ class bot:
         if self.player.activeCard is None and len(self.player.bench) > 0:
             self.player.activeCard = self.player.bench.pop(0);
             self.player.activeCard.isActive = True;
+            self.game.logEvent(
+                "active_card_selected",
+                player=self.player.name,
+                card=self.player.activeCard.name,
+            );
 
     def chooseTarget(self, attacker):
         opponents = self.getOpponents()
@@ -96,6 +101,11 @@ class bot:
 
             Combat.applySupport(card,self.player);
             self.player.hand.removeCard(card);
+            self.game.logEvent(
+                "support_card_played",
+                player=self.player.name,
+                card=card.name,
+            );
             print("Bot played support card: ", card.name);
 
     def takeTurn(self):
@@ -111,6 +121,11 @@ class bot:
                     self.player.activeCard = card;
                     self.player.hand.removeCard(card);
                     card.isActive = True;
+                    self.game.logEvent(
+                        "active_card_selected",
+                        player=self.player.name,
+                        card=card.name,
+                    );
                     print("Active card chosen:", self.player.activeCard.name);#TEST
                     attacker = card;
                     break;
@@ -140,6 +155,15 @@ class bot:
         damage = Combat.attack(attacker, target);
 
         self.player.attacked = True;
+
+        self.game.logEvent(
+            "attack_performed",
+            player=self.player.name,
+            attacker=attacker.name,
+            target=target.name,
+            damage=damage,
+            remaining_health=target.currentHealth,
+        );
 
         if target.currentHealth <= 0:
             target.currentHealth = 0;

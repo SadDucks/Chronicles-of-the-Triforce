@@ -1128,6 +1128,11 @@ class playerActions(QtCore.QObject):
             raise RuntimeError(f"Could not remove {card.name} from the displayed hand");
         player.setActiveCard(card);
         card.isActive = True;
+        self.game.logEvent(
+            "active_card_selected",
+            player=player.name,
+            card=card.name,
+        );
         scene.showActiveCard(card);
         if scene.passiveCardPreview is not None:
             scene.passiveCardPreview.hide();
@@ -1203,6 +1208,14 @@ class playerActions(QtCore.QObject):
         attackerPlayer.attacked = True;
         if targetCard.currentHealth <= 0:
             targetCard.currentHealth = 0;
+        self.game.logEvent(
+            "attack_performed",
+            player=attackerPlayer.name,
+            attacker=attacker.name,
+            target=targetCard.name,
+            damage=damage,
+            remaining_health=targetCard.currentHealth,
+        );
         Combat.reportAttack(attackerPlayer, attacker, targetCard, damage);
         if targetCard.currentHealth == 0:
             self.game.resolveActiveCardDefeat(attackerPlayer, targetPlayer);
@@ -1234,6 +1247,11 @@ class playerActions(QtCore.QObject):
             );
 
         currentPlayer.applySupportCard(selectedCard);
+        self.game.logEvent(
+            "support_card_played",
+            player=currentPlayer.name,
+            card=selectedCard.name,
+        );
         self.scene.playAreas.energyLabel.setText(str(currentPlayer.getEnergy()));
         self.scene.playAreas.showActiveCards(self.game.players, self.scene);
         if self.scene.passiveCardPreview is not None:
