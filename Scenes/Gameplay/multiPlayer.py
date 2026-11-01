@@ -54,6 +54,7 @@ class multiplayerSetup(QtWidgets.QWidget):
         self.pages.addWidget(self._createModePage());
         self.pages.addWidget(self._createJoinPage());
         self.pages.addWidget(self._createHostPage());
+        self.pages.addWidget(self._createClientLobbyPage());
 
         layout = QtWidgets.QVBoxLayout(self);
         layout.addWidget(self.pages);
@@ -171,6 +172,32 @@ class multiplayerSetup(QtWidgets.QWidget):
         backButton = QtWidgets.QPushButton("Stop Hosting");
         backButton.clicked.connect(self._showModePage);
         layout.addWidget(backButton, 0, QtCore.Qt.AlignmentFlag.AlignHCenter);
+        return page;
+
+    def _createClientLobbyPage(self):
+        page = QtWidgets.QWidget();
+        layout = QtWidgets.QVBoxLayout(page);
+
+        # Clients wait here until the host sends the game_start message.
+        title = QtWidgets.QLabel("Game Lobby");
+        title.setStyleSheet("font-size: 24px; font-weight: bold;");
+        title.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter);
+        layout.addWidget(title);
+
+        # The server-assigned seat is shown while the game is still waiting.
+        self.clientLobbyStatus = QtWidgets.QLabel(
+            "Connected. Waiting for the host to start..."
+        );
+        self.clientLobbyStatus.setAlignment(QtCore.Qt.AlignmentFlag.AlignCenter);
+        layout.addWidget(self.clientLobbyStatus);
+
+        # The host refreshes this roster whenever someone joins or leaves.
+        self.clientLobbyPlayerList = QtWidgets.QListWidget();
+        layout.addWidget(self.clientLobbyPlayerList, 1);
+
+        leaveButton = QtWidgets.QPushButton("Leave Lobby");
+        leaveButton.clicked.connect(self._showModePage);
+        layout.addWidget(leaveButton, 0, QtCore.Qt.AlignmentFlag.AlignHCenter);
         return page;
 
     def _prepareDiscoverySocket(self, port):
@@ -600,9 +627,12 @@ class multiplayerSetup(QtWidgets.QWidget):
         client = self.client;
         self.client = None;
         client.deleteLater();
-        self.refreshTimer.start();
+
         if self.pages.currentIndex() == 1:
+            self.refreshTimer.start();
             self.joinStatus.setText("Disconnected from the host.");
+        elif self.pages.currentIndex() == 3:
+            self.clientLobbyStatus.setText("Disconnected from the host.");
 
     def _playerConnected(self, address):
         print(f"[LAN lobby] Player connected from {address[0]}:{address[1]}")
@@ -616,43 +646,75 @@ class multiplayerSetup(QtWidgets.QWidget):
         for seat, playerAddress in enumerate(list(self.playerSeats), start=1):
             self.playerSeats[playerAddress] = seat;
         self._updatePlayerList();
+        self._broadcastLobbyState();
+
+    def _lobbyPlayerNames(self):
+        # Keep the host first so the roster order matches player seat order.
+        return [
+            QtNetwork.QHostInfo.localHostName(),
+            *self.connectedPlayers.values(),
+        ]
+
+    def _broadcastLobbyState(self):
+        if self.hostServer is None or self.isStarted:
+            return;
+
+        # Send a complete snapshot so clients can replace stale roster state.
+        self.hostServer.send({
+            "type": "lobby_state",
+            "session_id": self.sessionId,
+            "players": self._lobbyPlayerNames(),
+        });
 
     def _handleHostMessage(self, address, message):
         if not isinstance(message, dict):
             return;
+
         if self.isStarted:
             if message.get("type") == "action":
                 self._handleNetworkAction(address, message);
             return;
+
         if message.get("type") != "join":
             return;
+
         playerName = message.get("player_name");
         if not isinstance(playerName, str) or not playerName.strip():
             return;
+
         if address not in self.playerSeats:
             if len(self.playerSeats) >= 3:
                 self.hostServer.send({"type": "error", "message": "This game is full."}, address);
                 return;
             self.playerSeats[address] = len(self.playerSeats) + 1;
+
         playerName = playerName.strip()[:40];
         print(
             f"[LAN lobby] Join request received from "
             f"{playerName} at {address[0]}:{address[1]}"
         );
+
         self.connectedPlayers[address] = playerName;
+
+        # Include the current roster in admission so the new client renders it immediately.
         self.hostServer.send({
             "type": "joined",
             "session_id": self.sessionId,
             "seat": self.playerSeats[address],
             "player_name": playerName,
+            "players": self._lobbyPlayerNames(),
         }, address);
         self._updatePlayerList();
+        self._broadcastLobbyState();
 
     def _handleClientMessage(self, message):
         if not isinstance(message, dict):
             return;
+
+        # The host's admission response assigns this client a seat and opens the lobby.
         if message.get("type") == "joined":
             receivedSessionId = message.get("session_id");
+
             if (
                 not isinstance(receivedSessionId, str)
                 or (self.sessionId is not None and receivedSessionId != self.sessionId)
@@ -662,20 +724,45 @@ class multiplayerSetup(QtWidgets.QWidget):
             seat = message.get("seat");
             if not isinstance(seat, int) or not 1 <= seat <= 3:
                 return;
+
             self.localPlayerIndex = seat;
-            self.joinStatus.setText(
+            self.clientLobbyStatus.setText(
                 f"Joined as Player {seat + 1}. Waiting for the host to start..."
             );
+            self._updateClientLobby(message.get("players"));
+            self.pages.setCurrentIndex(3);
+
+        elif message.get("type") == "lobby_state":
+            if message.get("session_id") != self.sessionId:
+                return;
+
+            self._updateClientLobby(message.get("players"));
+
         elif message.get("type") == "error":
             self.joinStatus.setText(str(message.get("message", "Unable to join game.")));
+
         elif message.get("type") == "game_start":
             self._openSharedGame(message);
+
         elif message.get("type") == "game_update":
             self._openSharedGame(message, isUpdate=True);
+
+    def _updateClientLobby(self, players):
+        if not isinstance(players, list) or not all(
+            isinstance(name, str) for name in players
+        ):
+            return;
+
+        # Replace the whole roster because lobby_state messages are full snapshots.
+        self.clientLobbyPlayerList.clear();
+        for playerName in players:
+            self.clientLobbyPlayerList.addItem(playerName);
 
     def _startHostedGame(self):
         if self.isStarted or not self.playerSeats:
             return;
+
+        # Only build the shared game after at least one client has joined.
         humanCount = len(self.playerSeats) + 1;
         self.sharedGame = game(humanCount, 4 - humanCount);
         playerNames = [QtNetwork.QHostInfo.localHostName()] * 4;
@@ -856,6 +943,7 @@ class gameplayScene(QtWidgets.QWidget):
         self.lastReceivedSequence = gameSequence;
         self.isClosing = False;
         self.settingsStatus = False;
+        self.pauseStatus = False;
         self.scoreOverlay = None;
 
         self.activeStatus = False
@@ -995,6 +1083,14 @@ class gameplayScene(QtWidgets.QWidget):
             self.game.players, self, self.localPlayerIndex
         );
         self.passiveCardPreview = None;
+        self._turnGlowPlayer = None;
+        self._turnGlowClock = QtCore.QElapsedTimer();
+        self._turnTimeoutHandled = False;
+        self._turnGlowTimer = QtCore.QTimer(self);
+        self._turnGlowTimer.setInterval(250);
+        self._turnGlowTimer.timeout.connect(self._updateTurnGlow);
+        self._turnGlowTimer.start();
+        self._updateTurnGlow();
         if self.isHost:
             self.botTurnHandler.handleBotTurn();
 
@@ -1120,6 +1216,7 @@ class gameplayScene(QtWidgets.QWidget):
         self.playAreas.energyLabel.setText(
             str(self.game.players[self.localPlayerIndex].getEnergy())
         );
+        self._updateTurnGlow();
         self.botTurnHandler.botTurnInProgress = (
             self.isHost and self.game.currentPlayer.isBot
         );
@@ -1138,6 +1235,7 @@ class gameplayScene(QtWidgets.QWidget):
 
         currentPlayer = self.game.players[seat];
         actionType = action.get("type");
+        endOpeningTurn = False;
         if actionType == "end_turn":
             self.playerActions.cancelAttackSelection();
             drawnCard = self.game.nextTurn();
@@ -1164,6 +1262,12 @@ class gameplayScene(QtWidgets.QWidget):
             currentPlayer.hand.removeCard(selectedCard);
             currentPlayer.setActiveCard(selectedCard);
             selectedCard.isActive = True;
+            self.game.logEvent(
+                "active_card_selected",
+                player=currentPlayer.name,
+                card=selectedCard.name,
+            );
+            endOpeningTurn = self.game.round == 1;
         elif actionType == "use_support":
             cardId = action.get("card_id");
             selectedCard = next(
@@ -1177,6 +1281,11 @@ class gameplayScene(QtWidgets.QWidget):
                 return;
             currentPlayer.hand.removeCard(selectedCard);
             currentPlayer.applySupportCard(selectedCard);
+            self.game.logEvent(
+                "support_card_played",
+                player=currentPlayer.name,
+                card=selectedCard.name,
+            );
         elif actionType == "attack":
             targetIndex = action.get("target");
             if (
@@ -1190,6 +1299,7 @@ class gameplayScene(QtWidgets.QWidget):
             target = targetPlayer.activeCard;
             if (
                 not isinstance(attacker, attackCard)
+                or self.game.round == 1
                 or currentPlayer.attacked
                 or currentPlayer.energy < attacker.energy
                 or not isinstance(target, attackCard)
@@ -1200,14 +1310,27 @@ class gameplayScene(QtWidgets.QWidget):
             damage = Combat.attack(attacker, target);
             currentPlayer.attacked = True;
             target.currentHealth = max(0, target.currentHealth);
+            self.game.logEvent(
+                "attack_performed",
+                player=currentPlayer.name,
+                attacker=attacker.name,
+                target=target.name,
+                damage=damage,
+                remaining_health=target.currentHealth,
+            );
             Combat.reportAttack(currentPlayer, attacker, target, damage);
             if target.currentHealth == 0:
                 self.game.resolveActiveCardDefeat(currentPlayer, targetPlayer);
         else:
             return;
 
+        if endOpeningTurn:
+            drawnCard = self.game.nextTurn();
+            self.playDrawSound(drawnCard);
         self.applySynchronizedState(serializeGame(self.game), self.gameSequence);
         self._broadcastGameState();
+        if endOpeningTurn and not self.showWinnerIfAny():
+            self.botTurnHandler.handleBotTurn();
 
     #Settings
 
@@ -1219,6 +1342,31 @@ class gameplayScene(QtWidgets.QWidget):
         self.settingsOverlay.setGeometry(self.rect());
         self.settingsOverlay.raise_();
         self.settingsOverlay.show();
+
+    def openPauseMenu(self):
+        from Scenes.menu import pauseMenu;
+
+        self.pauseOverlay = pauseMenu(self);
+        self.pauseOverlay.resumeRequested.connect(self.resumeGame);
+        self.pauseOverlay.settingsRequested.connect(self.openSettings);
+        self.pauseOverlay.quitRequested.connect(self.quitToMainMenu);
+        self.pauseStatus = True;
+        self.pauseOverlay.setGeometry(self.rect());
+        self.pauseOverlay.raise_();
+        self.pauseOverlay.show();
+
+    def resumeGame(self):
+        self.pauseStatus = False;
+        self.pauseOverlay.close();
+        self.setFocus();
+
+    def quitToMainMenu(self):
+        if self.windowRef is None:
+            return;
+
+        self._closeNetworkConnections();
+        from Scenes.menu import mainMenu;
+        self.windowRef.changeScene(mainMenu);
 
     def showEvent(self, event):
         super().showEvent(event);
@@ -1234,8 +1382,10 @@ class gameplayScene(QtWidgets.QWidget):
                 self.scoreOverlay.close();
             elif self.settingsStatus:
                 self.settingsOverlay.close();
+            elif self.pauseStatus:
+                self.resumeGame();
             else:
-                self.openSettings();
+                self.openPauseMenu();
         else:
             super().keyPressEvent(event);
 
@@ -1250,6 +1400,8 @@ class gameplayScene(QtWidgets.QWidget):
 
         if hasattr(self, "settingsOverlay"):
             self.settingsOverlay.setGeometry(self.rect());
+        if hasattr(self, "pauseOverlay"):
+            self.pauseOverlay.setGeometry(self.rect());
         if self.scoreOverlay is not None:
             self.scoreOverlay.setGeometry(self.rect());
         if self.passiveCardPreview is not None:
@@ -1298,12 +1450,8 @@ class gameplayScene(QtWidgets.QWidget):
         self.cardDrawSound.stop();
         self.cardDrawSound.setPosition(0);
         self.cardDrawSound.play();
-        self.playAreas.showHand(
-            self.game.players, self.cardBack, self.localPlayerIndex
-        );
-        self.playAreas.handWidgets[self.localPlayerIndex + 1].cardSelected.connect(
-            self.showPassiveCard
-        );
+        self.playAreas.showHand(self.game.players, self.cardBack, self.localPlayerIndex);
+        self.playAreas.handWidgets[self.localPlayerIndex + 1].cardSelected.connect(self.showPassiveCard);
 
     def showWinnerIfAny(self):
         winner = self.game.checkWinCondition();
@@ -1339,6 +1487,41 @@ class gameplayScene(QtWidgets.QWidget):
             and not self.botTurnHandler.botTurnInProgress
             and self.game.winner is None
         );
+
+    def _updateTurnGlow(self):
+        if self.game.winner is not None:
+            self._turnGlowTimer.stop();
+            self.playAreas.setTurnGlow();
+            return;
+
+        currentPlayer = self.game.currentPlayer;
+        if currentPlayer is not self._turnGlowPlayer:
+            self._turnGlowPlayer = currentPlayer;
+            self._turnGlowClock.start();
+            self._turnTimeoutHandled = False;
+
+        elapsed = self._turnGlowClock.elapsed();
+        progress = min(1.0, elapsed / 60000);
+        currentPlayerIndex = self.game.players.index(currentPlayer);
+        self.playAreas.setTurnGlow(currentPlayerIndex, progress);
+
+        if elapsed >= 60000 and not self._turnTimeoutHandled:
+            self._turnTimeoutHandled = True;
+            QtCore.QTimer.singleShot(
+                0, lambda timedPlayer=currentPlayer: self._endTimedTurn(timedPlayer)
+            );
+
+    def _endTimedTurn(self, timedPlayer):
+        if (
+            self.game.currentPlayer is not timedPlayer
+            or not self.isHost
+            or self.game.winner is not None
+            or timedPlayer.isBot
+        ):
+            return;
+
+        seat = self.game.players.index(timedPlayer);
+        self.applyPlayerAction(seat, {"type": "end_turn"});
 
     def showActiveCard(self, card):
         self.activeCard = card;
@@ -1392,12 +1575,17 @@ class gameplayScene(QtWidgets.QWidget):
         ));
 
     def closeEvent(self, event):
+        self._closeNetworkConnections();
+        super().closeEvent(event);
+
+    def _closeNetworkConnections(self):
         self.isClosing = True;
         if self.hostServer is not None:
             self.hostServer.close();
+            self.hostServer = None;
         if self.client is not None:
             self.client.close();
-        super().closeEvent(event);
+            self.client = None;
 
 class scoreOverlayMenu(QtWidgets.QWidget):
     def __init__(self, parent, players):
@@ -1535,6 +1723,7 @@ class playArea:
     def __init__(self):
         self.playerFrames = [];
         self.playerAreaFrames = {};
+        self.turnGlowEffects = {};
         self.playerHandLayouts = {};
         self.handWidgets = {};
         self.activeCardLabels = {};
@@ -1555,6 +1744,11 @@ class playArea:
     def createFrame(self, width, height, playerNumber):
         rect = QtWidgets.QFrame();
         rect.setStyleSheet("background-color: #026012; border: 3px solid black;");
+        glowEffect = QtWidgets.QGraphicsDropShadowEffect(rect);
+        glowEffect.setOffset(0, 0);
+        glowEffect.setBlurRadius(0);
+        glowEffect.setColor(QtGui.QColor(255, 215, 0, 0));
+        rect.setGraphicsEffect(glowEffect);
         frameLayout = QtWidgets.QHBoxLayout(rect);
         frameLayout.setContentsMargins(0, 0, 0, 0);
         frameLayout.setSpacing(2);
@@ -1583,6 +1777,7 @@ class playArea:
         self.activeCardHealthLabels[playerNumber] = healthLabel;
 
         self.playerAreaFrames[playerNumber] = rect;
+        self.turnGlowEffects[playerNumber] = glowEffect;
         self.playerHandLayouts[playerNumber] = frameLayout;
         self.playerFrames.append((rect, width, height));
         return rect;
@@ -1636,6 +1831,29 @@ class playArea:
             localPlayerIndex = self.localPlayerIndex;
         relativeSeat = (playerIndex - localPlayerIndex) % 4;
         return self.screenSeatOrder[relativeSeat];
+
+    def setTurnGlow(self, playerIndex=None, progress=0.0):
+        if playerIndex is None:
+            for glowEffect in self.turnGlowEffects.values():
+                glowEffect.setBlurRadius(0);
+                glowEffect.setColor(QtGui.QColor(255, 215, 0, 0));
+            return;
+
+        currentScreenSlot = self._screenSlot(playerIndex);
+        for screenSlot, glowEffect in self.turnGlowEffects.items():
+            if screenSlot != currentScreenSlot:
+                glowEffect.setBlurRadius(0);
+                glowEffect.setColor(QtGui.QColor(255, 215, 0, 0));
+                continue;
+
+            progress = max(0.0, min(1.0, progress));
+            glowEffect.setColor(QtGui.QColor(
+                255,
+                round(215 * (1 - progress) + 20 * progress),
+                round(20 * progress),
+                255
+            ));
+            glowEffect.setBlurRadius(42);
 
     def showActiveCards(self, players, parent, localPlayerIndex=0):
         self.localPlayerIndex = localPlayerIndex;
@@ -2092,15 +2310,26 @@ class showPassiveCard(QtWidgets.QFrame):
         if parent is None:
             return;
 
-        panelWidth = min(280, max(1, parent.width() - 40));
-        panelHeight = min(400, max(1, parent.height() - 40));
+        scale = min(parent.width() / 960, parent.height() / 540);
+        margin = max(1, round(20 * scale));
+        panelWidth = min(
+            max(1, round(280 * scale)),
+            max(1, parent.width() - 2 * margin)
+        );
+        panelHeight = min(
+            max(1, round(400 * scale)),
+            max(1, parent.height() - 2 * margin)
+        );
         self.setGeometry(
-            parent.width() - panelWidth - 20,
+            parent.width() - panelWidth - margin,
             (parent.height() - panelHeight) // 2,
             panelWidth,
             panelHeight
         );
-        imageSize = QtCore.QSize(max(1, panelWidth - 32), max(1, panelHeight - 120));
+        imageSize = QtCore.QSize(
+            max(1, panelWidth - round(32 * scale)),
+            max(1, panelHeight - round(120 * scale))
+        );
         pixmap = self.cardPreviewSource.scaled(
             imageSize,
             QtCore.Qt.AspectRatioMode.KeepAspectRatio,
@@ -2148,10 +2377,18 @@ class playerActions(QtCore.QObject):
             raise RuntimeError(f"Could not remove {card.name} from the displayed hand");
         player.setActiveCard(card);
         card.isActive = True;
+        self.game.logEvent(
+            "active_card_selected",
+            player=player.name,
+            card=card.name,
+        );
         scene.showActiveCard(card);
-        scene._broadcastGameState();
         if scene.passiveCardPreview is not None:
             scene.passiveCardPreview.hide();
+        if scene.game.round == 1:
+            scene.endTurn();
+        else:
+            scene._broadcastGameState();
 
     #Attack related functions
     def attack(self):
@@ -2163,7 +2400,11 @@ class playerActions(QtCore.QObject):
             return;
 
         attacker = self.game.currentPlayer.activeCard;
-        if not isinstance(attacker, attackCard) or self.game.currentPlayer.attacked:
+        if (
+            self.game.round == 1
+            or not isinstance(attacker, attackCard)
+            or self.game.currentPlayer.attacked
+        ):
             return;
         if self.game.currentPlayer.energy < attacker.energy:
             self.scene.playAreas.flashInsufficientStamina(self.scene.localPlayerIndex);
@@ -2209,6 +2450,7 @@ class playerActions(QtCore.QObject):
         if (
             attackerPlayer is not self.game.players[self.scene.localPlayerIndex]
             or not isinstance(attacker, attackCard)
+            or self.game.round == 1
             or attackerPlayer.attacked
             or targetPlayer is None
             or targetCard.currentHealth <= 0
@@ -2230,6 +2472,14 @@ class playerActions(QtCore.QObject):
         attackerPlayer.attacked = True;
         if targetCard.currentHealth <= 0:
             targetCard.currentHealth = 0;
+        self.game.logEvent(
+            "attack_performed",
+            player=attackerPlayer.name,
+            attacker=attacker.name,
+            target=targetCard.name,
+            damage=damage,
+            remaining_health=targetCard.currentHealth,
+        );
         Combat.reportAttack(attackerPlayer, attacker, targetCard, damage);
         if targetCard.currentHealth == 0:
             self.game.resolveActiveCardDefeat(attackerPlayer, targetPlayer);
@@ -2273,6 +2523,11 @@ class playerActions(QtCore.QObject):
             );
 
         currentPlayer.applySupportCard(selectedCard);
+        self.game.logEvent(
+            "support_card_played",
+            player=currentPlayer.name,
+            card=selectedCard.name,
+        );
         self.scene.playAreas.energyLabel.setText(str(currentPlayer.getEnergy()));
         self.scene.playAreas.showActiveCards(
             self.game.players, self.scene, self.scene.localPlayerIndex

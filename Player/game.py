@@ -9,6 +9,7 @@ from Player import player;
 from Player import bot;
 from Deck.deck import deck;
 from Deck import card_list;
+from Logs.sessionLogger import sessionLogger;
 
 class game:
     startingHandSize = 5;
@@ -34,6 +35,7 @@ class game:
         self.discardPile = [];
         self.winner = None;
         self.round = 1 # Round Number
+        self.logger = sessionLogger();
 
         for i in range(totalPlayers):
             isBot = i >= totalPlayers - numberOfBots;
@@ -44,6 +46,13 @@ class game:
         
             self.players.append(newPlayer);
         self.currentPlayer = self.players[0];
+        self.logEvent(
+            "game_started",
+            players=[{"name": currentPlayer.name, "is_bot": currentPlayer.isBot} for currentPlayer in self.players],
+        );
+
+    def logEvent(self, eventType, **details):
+        self.logger.addLog({"type": eventType, **details});
 
     def drawStartingHands(self):
         for player in self.players:
@@ -52,6 +61,11 @@ class game:
             for i in range(self.startingHandSize):
                 card = self.deck.drawCard();
                 player.hand.addCard(card);
+            self.logEvent(
+                "starting_hand_dealt",
+                player=player.name,
+                cards=[card.name for card in player.hand.cards],
+            );
 
     def drawCardForPlayer(self, currentPlayer):
         if currentPlayer not in self.players:
@@ -61,6 +75,7 @@ class game:
 
         card = self.deck.drawCard();
         currentPlayer.hand.addCard(card);
+        self.logEvent("card_drawn", player=currentPlayer.name, card=card.name);
         return card;
 
     def resolveActiveCardDefeat(self, winningPlayer, defeatedPlayer):
@@ -77,6 +92,12 @@ class game:
         defeatedCard.isActive = False;
         self.discardPile.append(defeatedCard);
         defeatedPlayer.setActiveCard(None);
+        self.logEvent(
+            "active_card_defeated",
+            winner=winningPlayer.name,
+            defeated_player=defeatedPlayer.name,
+            card=defeatedCard.name,
+        );
 
         if not self.prizeCards:
             print("The prize deck is empty; no prize card was awarded.");
@@ -86,6 +107,7 @@ class game:
         random.shuffle(prizeChoices);
         prize = prizeChoices[0];
         winningPlayer.addPrizeCard(prize);
+        self.logEvent("prize_awarded", player=winningPlayer.name, card=prize.name);
         print(f"{winningPlayer.name} earned prize card: {prize.name}");
         return prize;
 
@@ -98,11 +120,19 @@ class game:
                 ),
                 None
             );
+            if self.winner is not None:
+                self.logEvent(
+                    "game_won",
+                    winner=self.winner.name,
+                    prize_cards=len(self.winner.prizeCards),
+                );
         return self.winner;
 
     def nextTurn(self):
         if self.checkWinCondition() is not None:
             return;
+
+        endingPlayer = self.currentPlayer;
 
         currentPlayerTurn = self.players.index(self.currentPlayer); # Current Turn
         nextPlayerTurn = (currentPlayerTurn + 1) % len(self.players); # Next players turn, repeats after last player
@@ -118,6 +148,13 @@ class game:
 
         drawnCard = self.drawCardForPlayer(self.currentPlayer);
 
+        self.logEvent(
+            "turn_ended",
+            player=endingPlayer.name,
+            round=self.round,
+            energy=endingPlayer.energy,
+        );
+
         print(self.currentPlayer.name);
 
         print("Energy:", self.currentPlayer.energy);
@@ -126,6 +163,11 @@ class game:
         self.checkWinCondition();
         
         self.currentPlayer = self.players[nextPlayerTurn]; # Changes to next player
+        self.logEvent(
+            "turn_started",
+            player=self.currentPlayer.name,
+            round=self.round,
+        );
         return drawnCard;
 
 
