@@ -194,9 +194,6 @@ class bot:
             print("Bot played support card: ", card.name);
 
     def takeTurn(self):
-
-        print("TEST\n\n")#TEST
-
         self.chooseActiveCard();
         attacker = self.player.activeCard;
 
