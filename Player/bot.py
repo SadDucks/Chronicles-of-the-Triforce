@@ -23,6 +23,54 @@ class bot:
     def getEnergy(self):
         return self.player.energy;
 
+    def getAttackOptions(self):
+        options = [];
+
+        if self.player.attacked:
+            return options;
+
+        candidates = [];
+
+        if self.player.activeCard is not None:
+            candidates.append(("active", self.player.activeCard));
+
+        for location, attacker in candidates:
+            if attacker.currentHealth <= 0:
+                continue;
+
+            target = self.chooseTarget(attacker);
+
+            if target is None:
+                continue;
+
+            if attacker.energy > self.getEnergy():
+                continue;
+
+            damage = attacker.attack + getattr(attacker, "damageBoost", 0);
+            damage = max(0, damage - getattr(target, "shield", 0));
+            damage = min(damage, target.currentHealth);
+
+            score = damage;
+
+            if damage >= target.currentHealth and target.currentHealth > 0:
+                score += 100;
+
+            if attacker.currentHealth <= 5:
+                score -=5;
+
+            options.append({
+                "card": attacker,
+                "location": location,
+                "target": target,
+                "damage": damage,
+                "energyCost": attacker.energy,
+                "score": score
+            });
+
+        options.sort(key = lambda option: option["score"], reverse = True);
+
+        return options;
+
     def getOpponents(self):
         opponents = [];
 
@@ -45,62 +93,99 @@ class bot:
                 card=self.player.activeCard.name,
             );
 
+    
     def chooseTarget(self, attacker):
-        opponents = self.getOpponents()
+        if attacker is None:
+            return None;
 
         bestTarget = None;
-        bestScore = -1;
+        bestScore = float("-inf");
 
-        for opponent in opponents:
+        for opponent in self.getOpponents():
             target = opponent.activeCard;
 
-            if target is not None:
-                score = self.evaluateTarget(attacker, target, opponent);
+            if target is None or target.currentHealth <= 0:
+                continue;
 
-                if score > bestScore:
-                    bestScore = score;
-                    bestTarget = target;
+            score = self.evaluateTarget(
+                attacker,
+                target,
+                opponent
+            );
+
+            if score > bestScore:
+                bestScore = score;
+                bestTarget = target;
 
         return bestTarget;
 
-    def evaluateTarget(self, attacker, target, opponent):
-        score = 0;
 
-        if attacker.attack >= target.currentHealth:
+    
+    def evaluateTarget(self, attacker, target, opponent):
+        if target is None or target.currentHealth <= 0:
+            return float("-inf");
+
+        rawDamage = (attacker.attack + getattr(attacker, "damageBoost", 0));
+
+        shield = getattr(target, "shield", 0);
+        damage = min(max(0, rawDamage - shield), target.currentHealth);
+
+        score = damage * 2
+
+        if damage >= target.currentHealth:
             score += 100;
 
-        wastedDamage = max(0, attacker.attack - target.currentHealth);
-        score -= wastedDamage // 2;
+            if len(self.player.prizeCards) >= 5:
+                score += 200;
 
-        points = len(opponent.prizeCards)
+        # Threat level
+        score += len(opponent.prizeCards) * 20;
 
-        if points >= 7:
-            score += 50;
-        elif points >= 5:
-            score += 25;
-        elif points >= 3:
-            score += 10;
+        # Damage efficiency
+        score -= max(0, rawDamage - shield - target.currentHealth);
 
-        print(f"Evaluating target {target.name} (Health: {target.currentHealth}, Points: {points}) against attacker {attacker.name} (Attack: {attacker.attack}) => Score: {score}");
         return score;
 
     def playSupportCards(self):
+        activeCard = self.player.activeCard;
+
+        if activeCard is None:
+            return;
+
         for card in self.player.hand.cards.copy():
-            if not hasattr(card, "effectType"):
+            if not hasattr(card, "effects"):
                 continue;
 
-            activeCard = self.player.activeCard;
+            shouldPlay = False;
 
-            if card.effectType == "healing":
-                if activeCard is None or activeCard.currentHealth >= activeCard.health:
-                    continue;
+            for effect in card.effects:
+                effectType = effect["effectType"];
+                amount = effect["amount"];
 
-            elif card.effectType == ("damage_boost", "shield"):
-                if activeCard is None:
-                    continue
+                if effectType == "energy":
+                    shouldPlay = True;
 
-            Combat.applySupport(card,self.player);
+                elif effectType == "healing":
+                    missingHealth = (activeCard.health - activeCard.currentHealth);
+
+                    if missingHealth >= amount and amount > 0:
+                        shouldPlay = True;
+
+                elif effectType == "damage_boost":
+                    if amount > 0 and activeCard.energy <= self.player.energy:
+                        shouldPlay = True;
+
+                elif effectType == "shield":
+                    if amount > 0 and getattr(activeCard, "shield", 0) < amount:
+                        shouldPlay = True;
+
+            if not shouldPlay:
+                continue;
+
+            Combat.applySupport(card, self.player);
             self.player.hand.removeCard(card);
+            print("Bot played support card:", card.name);
+
             self.game.logEvent(
                 "support_card_played",
                 player=self.player.name,
@@ -110,7 +195,7 @@ class bot:
 
     def takeTurn(self):
 
-        print("TEST\n\n\n")#TEST
+        print("TEST\n\n")#TEST
 
         self.chooseActiveCard();
         attacker = self.player.activeCard;
@@ -132,15 +217,22 @@ class bot:
 
         if attacker is None:
             print("No active card available, moving on.");
-            return;
+            return;    
 
         if self.game.round == 1:
             return;
 
         self.playSupportCards();
-        attacker = self.player.activeCard;
 
-        target = self.chooseTarget(attacker);
+        attackOptions = self.getAttackOptions();
+
+        if not attackOptions:
+            print("Bot has no legal attack.");
+            return;
+
+        bestAttack = attackOptions[0];
+        attacker = bestAttack["card"];
+        target = bestAttack["target"];
 
         if target is None:
             print("No target"); #TEST

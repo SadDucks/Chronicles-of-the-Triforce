@@ -171,6 +171,5 @@ class game:
         return drawnCard;
 
 
-
 if __name__ == "__main__":
     myGame = game(4, 2)

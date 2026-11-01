@@ -18,6 +18,8 @@ class attackCard(card):
         self.energy = energyCost;
         self.health = health;
         self.currentHealth = health;
+        self.damageBoost = 0;
+        self.shield = 0;
         self.isActive = False;
 
 # Creates Support Cards
@@ -26,22 +28,6 @@ class supportCard(card):
     def __init__(self, id, name, image, effects):
         super().__init__(id, name, image);
         self.effects = effects
-
-
-"""
-    def applyEffect(self, player):
-        player.energy += self.energy;
-
-        activeCard = player.activeCard;
-        if isinstance(activeCard, attackCard):
-            activeCard.currentHealth = min(
-                activeCard.currentHealth + self.healing,
-                activeCard.health
-            );
-
-        print(f"Applied support card {self.name} to player {player}");
-        print(f"Player {player} now has {player.energy} energy and active card health \
-              {player.activeCard.currentHealth if player.activeCard else 'N/A'}");"""
 
 # Creates Prize Cards
 
