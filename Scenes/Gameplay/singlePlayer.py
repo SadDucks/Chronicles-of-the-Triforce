@@ -19,6 +19,7 @@ class gameplayScene(QtWidgets.QWidget):
         self.config = config;
         self.windowRef = windowRef;
         self.settingsStatus = False;
+        self.pauseStatus = False;
         self.scoreOverlay = None;
 
         self.activeStatus = False
@@ -136,6 +137,14 @@ class gameplayScene(QtWidgets.QWidget):
         self.playAreas.handWidgets[1].cardSelected.connect(self.showPassiveCard);
         self.playAreas.showActiveCards(self.game.players, self);
         self.passiveCardPreview = None;
+        self._turnGlowPlayer = None;
+        self._turnGlowClock = QtCore.QElapsedTimer();
+        self._turnTimeoutHandled = False;
+        self._turnGlowTimer = QtCore.QTimer(self);
+        self._turnGlowTimer.setInterval(250);
+        self._turnGlowTimer.timeout.connect(self._updateTurnGlow);
+        self._turnGlowTimer.start();
+        self._updateTurnGlow();
 
 
     #Settings
@@ -149,6 +158,30 @@ class gameplayScene(QtWidgets.QWidget):
         self.settingsOverlay.raise_();
         self.settingsOverlay.show();
 
+    def openPauseMenu(self):
+        from Scenes.menu import pauseMenu;
+
+        self.pauseOverlay = pauseMenu(self);
+        self.pauseOverlay.resumeRequested.connect(self.resumeGame);
+        self.pauseOverlay.settingsRequested.connect(self.openSettings);
+        self.pauseOverlay.quitRequested.connect(self.quitToMainMenu);
+        self.pauseStatus = True;
+        self.pauseOverlay.setGeometry(self.rect());
+        self.pauseOverlay.raise_();
+        self.pauseOverlay.show();
+
+    def resumeGame(self):
+        self.pauseStatus = False;
+        self.pauseOverlay.close();
+        self.setFocus();
+
+    def quitToMainMenu(self):
+        if self.windowRef is None:
+            return;
+
+        from Scenes.menu import mainMenu;
+        self.windowRef.changeScene(mainMenu);
+
     def showEvent(self, event):
         super().showEvent(event);
         self.setFocus();
@@ -161,8 +194,10 @@ class gameplayScene(QtWidgets.QWidget):
                 self.scoreOverlay.close();
             elif self.settingsStatus:
                 self.settingsOverlay.close();
+            elif self.pauseStatus:
+                self.resumeGame();
             else:
-                self.openSettings();
+                self.openPauseMenu();
         else:
             super().keyPressEvent(event);
 
@@ -175,6 +210,8 @@ class gameplayScene(QtWidgets.QWidget):
 
         if hasattr(self, "settingsOverlay"):
             self.settingsOverlay.setGeometry(self.rect());
+        if hasattr(self, "pauseOverlay"):
+            self.pauseOverlay.setGeometry(self.rect());
         if self.scoreOverlay is not None:
             self.scoreOverlay.setGeometry(self.rect());
         if self.passiveCardPreview is not None:
@@ -253,6 +290,37 @@ class gameplayScene(QtWidgets.QWidget):
             and not self.botTurnHandler.botTurnInProgress
             and self.game.winner is None
         );
+
+    def _updateTurnGlow(self):
+        if self.game.winner is not None:
+            self._turnGlowTimer.stop();
+            self.playAreas.setTurnGlow();
+            return;
+
+        currentPlayer = self.game.currentPlayer;
+        if currentPlayer is not self._turnGlowPlayer:
+            self._turnGlowPlayer = currentPlayer;
+            self._turnGlowClock.start();
+            self._turnTimeoutHandled = False;
+
+        elapsed = self._turnGlowClock.elapsed();
+        progress = min(1.0, elapsed / 60000);
+        currentPlayerIndex = self.game.players.index(currentPlayer);
+        self.playAreas.setTurnGlow(currentPlayerIndex, progress);
+
+        if elapsed >= 60000 and not self._turnTimeoutHandled:
+            self._turnTimeoutHandled = True;
+            QtCore.QTimer.singleShot(
+                0, lambda timedPlayer=currentPlayer: self._endTimedTurn(timedPlayer)
+            );
+
+    def _endTimedTurn(self, timedPlayer):
+        if (
+            self.game.currentPlayer is timedPlayer
+            and self.game.winner is None
+            and not timedPlayer.isBot
+        ):
+            self.endTurn();
 
     def showActiveCard(self, card):
         self.activeCard = card;
@@ -433,6 +501,7 @@ class playArea:
     def __init__(self):
         self.playerFrames = [];
         self.playerAreaFrames = {};
+        self.turnGlowEffects = {};
         self.playerHandLayouts = {};
         self.handWidgets = {};
         self.activeCardLabels = {};
@@ -451,6 +520,11 @@ class playArea:
     def createFrame(self, width, height, playerNumber):
         rect = QtWidgets.QFrame();
         rect.setStyleSheet("background-color: #026012; border: 3px solid black;");
+        glowEffect = QtWidgets.QGraphicsDropShadowEffect(rect);
+        glowEffect.setOffset(0, 0);
+        glowEffect.setBlurRadius(0);
+        glowEffect.setColor(QtGui.QColor(255, 215, 0, 0));
+        rect.setGraphicsEffect(glowEffect);
         frameLayout = QtWidgets.QHBoxLayout(rect);
         frameLayout.setContentsMargins(0, 0, 0, 0);
         frameLayout.setSpacing(2);
@@ -479,6 +553,7 @@ class playArea:
         self.activeCardHealthLabels[playerNumber] = healthLabel;
 
         self.playerAreaFrames[playerNumber] = rect;
+        self.turnGlowEffects[playerNumber] = glowEffect;
         self.playerHandLayouts[playerNumber] = frameLayout;
         self.playerFrames.append((rect, width, height));
         return rect;
@@ -525,6 +600,29 @@ class playArea:
                 max(1, round(baseWidth * self.scale)),
                 max(1, round(baseHeight * self.scale))
             ));
+
+    def setTurnGlow(self, playerIndex=None, progress=0.0):
+        if playerIndex is None:
+            for glowEffect in self.turnGlowEffects.values():
+                glowEffect.setBlurRadius(0);
+                glowEffect.setColor(QtGui.QColor(255, 215, 0, 0));
+            return;
+
+        currentPlayerNumber = playerIndex + 1;
+        for playerNumber, glowEffect in self.turnGlowEffects.items():
+            if playerNumber != currentPlayerNumber:
+                glowEffect.setBlurRadius(0);
+                glowEffect.setColor(QtGui.QColor(255, 215, 0, 0));
+                continue;
+
+            progress = max(0.0, min(1.0, progress));
+            glowEffect.setColor(QtGui.QColor(
+                255,
+                round(215 * (1 - progress) + 20 * progress),
+                round(20 * progress),
+                255
+            ));
+            glowEffect.setBlurRadius(42);
 
     def showActiveCards(self, players, parent):
         for playerNumber, player in enumerate(players, start=1):
@@ -973,15 +1071,26 @@ class showPassiveCard(QtWidgets.QFrame):
         if parent is None:
             return;
 
-        panelWidth = min(280, max(1, parent.width() - 40));
-        panelHeight = min(400, max(1, parent.height() - 40));
+        scale = min(parent.width() / 960, parent.height() / 540);
+        margin = max(1, round(20 * scale));
+        panelWidth = min(
+            max(1, round(280 * scale)),
+            max(1, parent.width() - 2 * margin)
+        );
+        panelHeight = min(
+            max(1, round(400 * scale)),
+            max(1, parent.height() - 2 * margin)
+        );
         self.setGeometry(
-            parent.width() - panelWidth - 20,
+            parent.width() - panelWidth - margin,
             (parent.height() - panelHeight) // 2,
             panelWidth,
             panelHeight
         );
-        imageSize = QtCore.QSize(max(1, panelWidth - 32), max(1, panelHeight - 120));
+        imageSize = QtCore.QSize(
+            max(1, panelWidth - round(32 * scale)),
+            max(1, panelHeight - round(120 * scale))
+        );
         pixmap = self.cardPreviewSource.scaled(
             imageSize,
             QtCore.Qt.AspectRatioMode.KeepAspectRatio,
@@ -1019,9 +1128,16 @@ class playerActions(QtCore.QObject):
             raise RuntimeError(f"Could not remove {card.name} from the displayed hand");
         player.setActiveCard(card);
         card.isActive = True;
+        self.game.logEvent(
+            "active_card_selected",
+            player=player.name,
+            card=card.name,
+        );
         scene.showActiveCard(card);
         if scene.passiveCardPreview is not None:
             scene.passiveCardPreview.hide();
+        if scene.game.round == 1:
+            scene.endTurn();
 
     #Attack related functions
     def attack(self):
@@ -1033,7 +1149,11 @@ class playerActions(QtCore.QObject):
             return;
 
         attacker = self.game.currentPlayer.activeCard;
-        if not isinstance(attacker, attackCard) or self.game.currentPlayer.attacked:
+        if (
+            self.game.round == 1
+            or not isinstance(attacker, attackCard)
+            or self.game.currentPlayer.attacked
+        ):
             return;
         if self.game.currentPlayer.energy < attacker.energy:
             self.scene.playAreas.flashInsufficientStamina();
@@ -1075,6 +1195,7 @@ class playerActions(QtCore.QObject):
         if (
             attackerPlayer is not self.game.players[0]
             or not isinstance(attacker, attackCard)
+            or self.game.round == 1
             or attackerPlayer.attacked
             or targetPlayer is None
             or targetCard.currentHealth <= 0
@@ -1087,6 +1208,14 @@ class playerActions(QtCore.QObject):
         attackerPlayer.attacked = True;
         if targetCard.currentHealth <= 0:
             targetCard.currentHealth = 0;
+        self.game.logEvent(
+            "attack_performed",
+            player=attackerPlayer.name,
+            attacker=attacker.name,
+            target=targetCard.name,
+            damage=damage,
+            remaining_health=targetCard.currentHealth,
+        );
         Combat.reportAttack(attackerPlayer, attacker, targetCard, damage);
         if targetCard.currentHealth == 0:
             self.game.resolveActiveCardDefeat(attackerPlayer, targetPlayer);
@@ -1118,6 +1247,11 @@ class playerActions(QtCore.QObject):
             );
 
         currentPlayer.applySupportCard(selectedCard);
+        self.game.logEvent(
+            "support_card_played",
+            player=currentPlayer.name,
+            card=selectedCard.name,
+        );
         self.scene.playAreas.energyLabel.setText(str(currentPlayer.getEnergy()));
         self.scene.playAreas.showActiveCards(self.game.players, self.scene);
         if self.scene.passiveCardPreview is not None:
