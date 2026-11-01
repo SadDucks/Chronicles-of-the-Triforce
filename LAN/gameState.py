@@ -12,6 +12,8 @@ def _serializeCard(card):
             "energy": card.energy,
             "health": card.health,
             "currentHealth": card.currentHealth,
+            "damageBoost": card.damageBoost,
+            "shield": card.shield,
             "isActive": card.isActive,
         }
     if isinstance(card, supportCard):
@@ -44,6 +46,8 @@ def _deserializeCard(data):
             data["health"],
         )
         card.currentHealth = data["currentHealth"]
+        card.damageBoost = data["damageBoost"]
+        card.shield = data["shield"]
         card.isActive = data["isActive"]
         return card
     if cardType == "support":
@@ -67,8 +71,6 @@ def serializeGame(game):
                 "bench": [_serializeCard(card) for card in player.bench],
                 "prizeCards": [_serializeCard(card) for card in player.prizeCards],
                 "energy": player.energy,
-                "damageBoost": player.damageBoost,
-                "shield": player.shield,
                 "attacked": player.attacked,
             }
             for player in game.players
@@ -94,8 +96,6 @@ def restoreGame(game, state):
         player.bench = [_deserializeCard(card) for card in data["bench"]]
         player.prizeCards = [_deserializeCard(card) for card in data["prizeCards"]]
         player.energy = data["energy"]
-        player.damageBoost = data["damageBoost"]
-        player.shield = data["shield"]
         player.attacked = data["attacked"]
         if player.bot is not None:
             player.bot.player = player
